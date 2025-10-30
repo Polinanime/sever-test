@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Send, Volume2, VolumeX } from 'lucide-react';
+import React, { useState, useEffect, useRef } from "react";
+import { Mic, MicOff, Send, Volume2, VolumeX } from "lucide-react";
 
 interface Message {
   id: string;
-  role: 'user' | 'assistant';
+  role: "user" | "assistant" | "system";
   content: string;
   timestamp: Date;
 }
@@ -15,11 +15,13 @@ interface AgentEvent {
 
 const AgentChat: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState('');
+  const [inputText, setInputText] = useState("");
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [agentStatus, setAgentStatus] = useState<string>('Disconnected');
+  const [agentStatus, setAgentStatus] = useState<string>("Disconnected");
+  const [currentAssistantMessage, setCurrentAssistantMessage] =
+    useState<string>("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -42,38 +44,39 @@ const AgentChat: React.FC = () => {
 
   // Auto-scroll to bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   const connectWebSocket = () => {
-    const ws = new WebSocket('ws://localhost:8000/ws/realtime');
+    const ws = new WebSocket("ws://localhost:8000/ws/realtime");
 
     ws.onopen = () => {
-      console.log('WebSocket connected');
+      console.log("WebSocket connected");
       setIsConnected(true);
-      setAgentStatus('Connected');
-      addSystemMessage('Connected to AI agent');
+      setAgentStatus("Connected");
+      addSystemMessage("Connected to AI agent");
     };
 
     ws.onclose = () => {
-      console.log('WebSocket disconnected');
+      console.log("WebSocket disconnected");
       setIsConnected(false);
-      setAgentStatus('Disconnected');
-      addSystemMessage('Disconnected from AI agent');
+      setAgentStatus("Disconnected");
+      addSystemMessage("Disconnected from AI agent");
     };
 
     ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setAgentStatus('Error');
-      addSystemMessage('Connection error occurred');
+      console.error("WebSocket error:", error);
+      setAgentStatus("Error");
+      addSystemMessage("Connection error occurred");
     };
 
     ws.onmessage = (event) => {
       try {
         const data: AgentEvent = JSON.parse(event.data);
+
         handleAgentEvent(data);
       } catch (error) {
-        console.error('Error parsing message:', error);
+        console.error("Error parsing message:", error, "Raw data:", event.data);
       }
     };
 
@@ -81,54 +84,212 @@ const AgentChat: React.FC = () => {
   };
 
   const handleAgentEvent = (event: AgentEvent) => {
-    console.log('Agent event:', event);
-
     switch (event.type) {
-      case 'agent_start':
-        setAgentStatus('Thinking...');
+      case "debug_text":
+        addSystemMessage(event.text);
         break;
 
-      case 'agent_end':
-        setAgentStatus('Ready');
+      case "agent_start":
+        setAgentStatus("Thinking...");
         break;
 
-      case 'tool_start':
+      case "agent_end":
+        setAgentStatus("Ready");
+        break;
+
+      case "tool_start":
         setAgentStatus(`Using tool: ${event.tool}`);
-        addSystemMessage(`🔧 Calling function: ${event.tool}`);
+        addMessage("system", `🔧 Calling function: ${event.tool}`);
         break;
 
-      case 'tool_end':
-        setAgentStatus('Processing...');
+      case "tool_end":
+        setAgentStatus("Processing...");
+        const toolOutput = event.output;
+        if (toolOutput) {
+          try {
+            const parsed = JSON.parse(toolOutput);
+            if (parsed.error) {
+              addMessage("system", `⚠️ Tool error: ${parsed.error}`);
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
         break;
 
-      case 'audio':
+      case "audio":
         if (!isMuted) {
           playAudio(event.audio);
         }
         break;
 
-      case 'audio_end':
-        setAgentStatus('Ready');
+      case "audio_end":
+        setAgentStatus("Ready");
         break;
 
-      case 'history_added':
-        if (event.item && event.item.role === 'assistant') {
-          const content = event.item.content
-            ?.map((c: any) => c.text || c.transcript || '')
-            .join(' ');
-          if (content) {
-            addMessage('assistant', content);
+      case "history_updated":
+        // PRIORITY 1: Check if there's a pre-extracted last assistant message
+        if (event.last_assistant_message) {
+          addMessage("assistant", event.last_assistant_message);
+          setCurrentAssistantMessage("");
+          return; // Exit early
+        }
+
+        // PRIORITY 2: Try to extract from history
+        if (event.history && event.history.length > 0) {
+          const lastItem = event.history[event.history.length - 1];
+
+          if (lastItem.role === "assistant" && lastItem.content) {
+            const content = lastItem.content
+              ?.map((c: any) => {
+                if (c.type === "text" && c.text) return c.text;
+                if (c.type === "audio" && c.transcript) return c.transcript;
+                if (c.text) return c.text;
+                if (c.transcript) return c.transcript;
+                return "";
+              })
+              .filter((text: string) => text.length > 0)
+              .join(" ");
+
+            if (content && content.trim()) {
+              addMessage("assistant", content);
+              setCurrentAssistantMessage("");
+              return; // Exit early
+            } else {
+              console.warn("⚠️⚠️⚠️ NO TEXT FOUND IN HISTORY CONTENT");
+            }
           }
         }
         break;
 
-      case 'error':
-        setAgentStatus('Error');
+      case "history_added":
+        // Check if there's pre-extracted text
+        if (event.text) {
+          addMessage("assistant", event.text);
+          setCurrentAssistantMessage("");
+          break;
+        }
+
+        if (event.item && event.item.role === "assistant") {
+          // Extract all text content from assistant message
+          const content = event.item.content
+            ?.map((c: any) => {
+              if (c.type === "text" && c.text) {
+                return c.text;
+              }
+              if (c.type === "audio" && c.transcript) {
+                return c.transcript;
+              }
+              if (c.text) {
+                return c.text;
+              }
+              if (c.transcript) {
+                return c.transcript;
+              }
+              return "";
+            })
+            .filter((text: string) => text.length > 0)
+            .join(" ");
+
+          if (content && content.trim()) {
+            addMessage("assistant", content);
+            setCurrentAssistantMessage("");
+          } else {
+            console.warn("⚠️ No text content extracted from assistant message");
+          }
+        } else if (event.item && event.item.role === "user") {
+          // Show user message from history
+          const content = event.item.content
+            ?.map((c: any) => c.text || c.transcript || "")
+            .filter((text: string) => text.length > 0)
+            .join(" ");
+
+          if (content && content.trim()) {
+            // Only add if not already in messages
+            const lastMessage = messages[messages.length - 1];
+            if (!lastMessage || lastMessage.content !== content) {
+              addMessage("user", content);
+            }
+          }
+        }
+        break;
+
+      case "response.text.delta":
+        // Handle streaming text responses
+        if (event.delta) {
+          setCurrentAssistantMessage((prev) => prev + event.delta);
+        }
+        break;
+
+      case "response.text.done":
+        // Finalize streaming text
+        if (currentAssistantMessage) {
+          addMessage("assistant", currentAssistantMessage);
+          setCurrentAssistantMessage("");
+        }
+        break;
+
+      case "response.audio_transcript.delta":
+        // Handle audio transcription streaming
+        console.log("🎤🎤🎤 TRANSCRIPT DELTA:", event.delta);
+        if (event.delta) {
+          console.log("✅✅✅ ADDING TO CURRENT MESSAGE:", event.delta);
+          setCurrentAssistantMessage((prev) => {
+            const newMessage = prev + event.delta;
+            console.log("Current message now:", newMessage);
+            return newMessage;
+          });
+        } else {
+          console.warn(
+            "⚠️ response.audio_transcript.delta with no delta field",
+          );
+        }
+        break;
+
+      case "response.audio_transcript.done":
+        // Finalize audio transcript
+        if (event.transcript || currentAssistantMessage) {
+          const finalText = event.transcript || currentAssistantMessage;
+          if (finalText) {
+            addMessage("assistant", finalText);
+            setCurrentAssistantMessage("");
+          }
+        } else {
+          console.warn("⚠️ response.audio_transcript.done with no transcript");
+        }
+        break;
+
+      case "raw_model_event":
+        // Handle raw events that might contain transcript deltas
+        if (event.raw_event === "transcript_delta") {
+          if (event.delta) {
+            setCurrentAssistantMessage((prev) => {
+              const newMessage = prev + event.delta;
+              return newMessage;
+            });
+          } else {
+            console.warn("⚠️ transcript_delta but no delta field", event);
+          }
+        } else if (event.raw_event === "transcript_done") {
+          if (event.transcript || currentAssistantMessage) {
+            const finalText = event.transcript || currentAssistantMessage;
+            if (finalText) {
+              addMessage("assistant", finalText);
+              setCurrentAssistantMessage("");
+            }
+          } else {
+            console.warn("⚠️ transcript_done but no transcript field", event);
+          }
+        }
+        break;
+
+      case "error":
+        setAgentStatus("Error");
         addSystemMessage(`❌ Error: ${event.error}`);
         break;
 
       default:
-        console.log('Unhandled event type:', event.type);
+        console.log("Unhandled event type:", event.type);
     }
   };
 
@@ -145,29 +306,30 @@ const AgentChat: React.FC = () => {
         view[i] = audioData.charCodeAt(i);
       }
 
-      const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+      const audioBuffer =
+        await audioContextRef.current.decodeAudioData(arrayBuffer);
       const source = audioContextRef.current.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(audioContextRef.current.destination);
       source.start();
     } catch (error) {
-      console.error('Error playing audio:', error);
+      console.error("Error playing audio:", error);
     }
   };
 
   const sendTextMessage = () => {
     if (!inputText.trim() || !wsRef.current || !isConnected) return;
 
-    addMessage('user', inputText);
+    addMessage("user", inputText);
 
     wsRef.current.send(
       JSON.stringify({
-        type: 'text',
+        type: "text",
         text: inputText,
-      })
+      }),
     );
 
-    setInputText('');
+    setInputText("");
   };
 
   const startRecording = async () => {
@@ -181,16 +343,16 @@ const AgentChat: React.FC = () => {
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
         const arrayBuffer = await audioBlob.arrayBuffer();
         const int16Array = new Int16Array(arrayBuffer);
 
         if (wsRef.current && isConnected) {
           wsRef.current.send(
             JSON.stringify({
-              type: 'audio',
+              type: "audio",
               data: Array.from(int16Array),
-            })
+            }),
           );
         }
       };
@@ -198,40 +360,45 @@ const AgentChat: React.FC = () => {
       mediaRecorder.start();
       mediaRecorderRef.current = mediaRecorder;
       setIsRecording(true);
-      setAgentStatus('Listening...');
+      setAgentStatus("Listening...");
     } catch (error) {
-      console.error('Error accessing microphone:', error);
-      addSystemMessage('❌ Could not access microphone');
+      console.error("Error accessing microphone:", error);
+      addSystemMessage("❌ Could not access microphone");
     }
   };
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+      mediaRecorderRef.current.stream
+        .getTracks()
+        .forEach((track) => track.stop());
       setIsRecording(false);
-      setAgentStatus('Processing...');
+      setAgentStatus("Processing...");
     }
   };
 
-  const addMessage = (role: 'user' | 'assistant', content: string) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: Date.now().toString(),
-        role,
-        content,
-        timestamp: new Date(),
-      },
-    ]);
+  const addMessage = (role: "user" | "assistant", content: string) => {
+    setMessages((prev) => {
+      const newMessages = [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          role,
+          content,
+          timestamp: new Date(),
+        },
+      ];
+      return newMessages;
+    });
   };
 
   const addSystemMessage = (content: string) => {
-    console.log('System:', content);
+    addMessage("system", content);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendTextMessage();
     }
@@ -245,10 +412,10 @@ const AgentChat: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">AI Agent Chat</h1>
             <p className="text-sm text-gray-500 mt-1">
-              Status:{' '}
+              Status:{" "}
               <span
                 className={`font-medium ${
-                  isConnected ? 'text-green-600' : 'text-red-600'
+                  isConnected ? "text-green-600" : "text-red-600"
                 }`}
               >
                 {agentStatus}
@@ -260,10 +427,10 @@ const AgentChat: React.FC = () => {
               onClick={() => setIsMuted(!isMuted)}
               className={`p-2 rounded-lg transition-colors ${
                 isMuted
-                  ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  ? "bg-red-100 text-red-600 hover:bg-red-200"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
               }`}
-              title={isMuted ? 'Unmute audio' : 'Mute audio'}
+              title={isMuted ? "Unmute audio" : "Mute audio"}
             >
               {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
             </button>
@@ -294,7 +461,8 @@ const AgentChat: React.FC = () => {
               Start a conversation
             </h3>
             <p className="text-gray-500 max-w-md mx-auto">
-              Ask me about your emails, calendar, or anything else I can help with!
+              Ask me about your emails, calendar, or anything else I can help
+              with!
             </p>
             <div className="mt-6 space-y-2 text-sm text-gray-600">
               <p>Try asking:</p>
@@ -311,20 +479,30 @@ const AgentChat: React.FC = () => {
           <div
             key={message.id}
             className={`flex ${
-              message.role === 'user' ? 'justify-end' : 'justify-start'
+              message.role === "user"
+                ? "justify-end"
+                : message.role === "system"
+                  ? "justify-center"
+                  : "justify-start"
             }`}
           >
             <div
               className={`max-w-[80%] rounded-lg px-4 py-3 ${
-                message.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white text-gray-900 shadow-sm border'
+                message.role === "user"
+                  ? "bg-blue-600 text-white"
+                  : message.role === "system"
+                    ? "bg-gray-100 text-gray-700 text-sm border border-gray-200"
+                    : "bg-white text-gray-900 shadow-sm border"
               }`}
             >
               <p className="whitespace-pre-wrap">{message.content}</p>
               <p
                 className={`text-xs mt-1 ${
-                  message.role === 'user' ? 'text-blue-100' : 'text-gray-400'
+                  message.role === "user"
+                    ? "text-blue-100"
+                    : message.role === "system"
+                      ? "text-gray-500"
+                      : "text-gray-400"
                 }`}
               >
                 {message.timestamp.toLocaleTimeString()}
@@ -332,6 +510,18 @@ const AgentChat: React.FC = () => {
             </div>
           </div>
         ))}
+
+        {/* Show current streaming message */}
+        {currentAssistantMessage && (
+          <div className="flex justify-start">
+            <div className="max-w-[80%] rounded-lg px-4 py-3 bg-white text-gray-900 shadow-sm border">
+              <p className="whitespace-pre-wrap">{currentAssistantMessage}</p>
+              <p className="text-xs mt-1 text-gray-400">
+                <span className="animate-pulse">●</span> typing...
+              </p>
+            </div>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 
@@ -354,11 +544,11 @@ const AgentChat: React.FC = () => {
             onClick={isRecording ? stopRecording : startRecording}
             className={`p-3 rounded-lg transition-colors ${
               isRecording
-                ? 'bg-red-600 text-white hover:bg-red-700 animate-pulse'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                ? "bg-red-600 text-white hover:bg-red-700 animate-pulse"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             }`}
             disabled={!isConnected}
-            title={isRecording ? 'Stop recording' : 'Start recording'}
+            title={isRecording ? "Stop recording" : "Start recording"}
           >
             {isRecording ? <MicOff size={24} /> : <Mic size={24} />}
           </button>

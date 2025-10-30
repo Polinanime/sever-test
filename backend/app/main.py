@@ -19,9 +19,10 @@ from agents.tool import FunctionTool
 from typing_extensions import assert_never
 
 from .agents.outlook_tools import OutlookTools
+from .agents.github_tools import GitHubTools
 from .integrations.outlook import OutlookClient
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Agent with Outlook Integration")
@@ -44,6 +45,7 @@ class RealtimeWebSocketManager:
         self.session_contexts: dict[str, Any] = {}
         self.websockets: dict[str, WebSocket] = {}
         self.outlook_tools: dict[str, OutlookTools] = {}
+        self.github_tools: dict[str, GitHubTools] = {}
 
     async def connect(self, websocket: WebSocket, session_id: str):
         await websocket.accept()
@@ -54,16 +56,23 @@ class RealtimeWebSocketManager:
         outlook_tools = OutlookTools()
         self.outlook_tools[session_id] = outlook_tools
 
-        # Get function definitions from outlook_tools
-        function_defs = outlook_tools.get_function_definitions()
+        # Initialize GitHub tools
+        github_tools = GitHubTools()
+        self.github_tools[session_id] = github_tools
+
+        # Get function definitions from both tools
+        function_defs = (
+            outlook_tools.get_function_definitions()
+            + github_tools.get_function_definitions()
+        )
 
         # Create FunctionTool objects for each function
         tools = []
-        for func_def in function_defs:
+
+        # Outlook tools
+        for func_def in outlook_tools.get_function_definitions():
             func_name = func_def["name"]
 
-            # Create async handler that calls the appropriate function
-            # Use default argument to capture func_name value in closure
             def create_handler(name=func_name):
                 async def handler(context, arguments_json):
                     args = json.loads(arguments_json)
@@ -80,20 +89,53 @@ class RealtimeWebSocketManager:
             )
             tools.append(tool)
 
-        # Create agent with Outlook integration capabilities
+        # GitHub tools
+        for func_def in github_tools.get_function_definitions():
+            func_name = func_def["name"]
+
+            def create_handler(name=func_name):
+                async def handler(context, arguments_json):
+                    args = json.loads(arguments_json)
+                    result = await github_tools.execute_function(name, args)
+                    return result
+
+                return handler
+
+            tool = FunctionTool(
+                name=func_def["name"],
+                description=func_def["description"],
+                params_json_schema=func_def["parameters"],
+                on_invoke_tool=create_handler(),
+            )
+            tools.append(tool)
+
         agent = RealtimeAgent(
             name="Assistant",
-            instructions="""You are a helpful AI assistant with access to the user's Outlook account.
-            You can help manage emails, calendar events, and provide information about their schedule.
+            instructions="""You are a helpful AI assistant with access to the user's Outlook account and GitHub.
+            You can help manage emails, calendar events, GitHub repositories, issues, and pull requests.
 
             Available capabilities:
+
+            Outlook:
             - Read and search emails
             - Send and reply to emails
             - Mark emails as read or delete them
             - View calendar events and schedule
             - Create new calendar events
 
-            Always confirm with the user before sending emails or creating calendar events.
+            GitHub:
+            - List and search repositories
+            - View and manage issues
+            - Create and update pull requests
+            - List commits and branches
+            - Get repository information
+            - Search across GitHub
+
+            Always confirm with the user before:
+            - Sending emails or creating calendar events
+            - Creating or modifying GitHub issues/PRs
+            - Making any changes to repositories
+
             Be helpful, concise, and professional in your responses.""",
             tools=tools,
         )
@@ -120,6 +162,9 @@ class RealtimeWebSocketManager:
         if session_id in self.outlook_tools:
             await self.outlook_tools[session_id].close()
             del self.outlook_tools[session_id]
+        if session_id in self.github_tools:
+            await self.github_tools[session_id].close()
+            del self.github_tools[session_id]
         logger.info(f"Session disconnected: {session_id}")
 
     async def send_audio(self, session_id: str, audio_bytes: bytes):
@@ -143,7 +188,9 @@ class RealtimeWebSocketManager:
                 return
 
             async for event in session:
+                logger.info(f"Received event type: {event.type}")
                 event_data = await self._serialize_event(event)
+                logger.info(f"Serialized event data: {json.dumps(event_data)[:200]}")
                 await websocket.send_text(json.dumps(event_data))
 
         except Exception as e:
@@ -181,12 +228,177 @@ class RealtimeWebSocketManager:
             base_event["item_id"] = event.item_id
         elif event.type == "history_updated":
             base_event["history"] = [item.model_dump() for item in event.history]
+            # Also send the last item as history_added for easier frontend handling
+            if event.history:
+                last_item = event.history[-1]
+                if hasattr(last_item, "role") and last_item.role == "assistant":
+                    # Extract text from the last assistant message
+                    text_parts = []
+                    if hasattr(last_item, "content") and last_item.content:
+                        for content_item in last_item.content:
+                            if hasattr(content_item, "text") and content_item.text:
+                                text_parts.append(content_item.text)
+                            elif (
+                                hasattr(content_item, "transcript")
+                                and content_item.transcript
+                            ):
+                                text_parts.append(content_item.transcript)
+                    if text_parts:
+                        final_text = " ".join(text_parts)
+                        base_event["last_assistant_message"] = final_text
+                        logger.info(f"Last assistant message: {final_text}")
         elif event.type == "history_added":
             base_event["item"] = event.item.model_dump()
+            logger.info(f"History added - item: {base_event['item']}")
+            # Extract text content if available for easier frontend access
+            if hasattr(event.item, "content") and event.item.content:
+                text_parts = []
+                for content_item in event.item.content:
+                    logger.info(
+                        f"Content item type: {type(content_item)}, has text: {hasattr(content_item, 'text')}, has transcript: {hasattr(content_item, 'transcript')}"
+                    )
+                    if hasattr(content_item, "text") and content_item.text:
+                        text_parts.append(content_item.text)
+                        logger.info(f"Added text: {content_item.text}")
+                    elif (
+                        hasattr(content_item, "transcript") and content_item.transcript
+                    ):
+                        text_parts.append(content_item.transcript)
+                        logger.info(f"Added transcript: {content_item.transcript}")
+                if text_parts:
+                    base_event["text"] = " ".join(text_parts)
+                    logger.info(f"Final text: {base_event['text']}")
         elif event.type == "guardrail_tripped":
             base_event["message"] = event.message
         elif event.type == "raw_model_event":
             base_event["raw_event"] = event.data.type
+            logger.info(f"🔍 RAW_MODEL_EVENT: {event.data.type}")
+
+            # Handle transcript_delta events - extract the actual data
+            if event.data.type == "transcript_delta":
+                logger.info(f"🎤 TRANSCRIPT_DELTA EVENT DETECTED")
+
+                # Log the raw event.data object structure
+                logger.info(f"event.data type: {type(event.data)}")
+                logger.info(f"event.data attributes: {dir(event.data)}")
+
+                # Try multiple ways to extract the delta
+                delta = None
+                transcript = None
+                item_id = None
+
+                # Method 1: Direct attribute access
+                if hasattr(event.data, "delta"):
+                    delta = event.data.delta
+                    logger.info(f"✅ Found delta via direct attribute: '{delta}'")
+
+                if hasattr(event.data, "transcript"):
+                    transcript = event.data.transcript
+                    logger.info(
+                        f"✅ Found transcript via direct attribute: '{transcript}'"
+                    )
+
+                if hasattr(event.data, "item_id"):
+                    item_id = event.data.item_id
+                    logger.info(f"✅ Found item_id: '{item_id}'")
+
+                # Method 2: model_dump() if available
+                if not delta or not transcript:
+                    event_dict = (
+                        event.data.model_dump()
+                        if hasattr(event.data, "model_dump")
+                        else {}
+                    )
+                    logger.info(f"Event data dict from model_dump: {event_dict}")
+
+                    if not delta:
+                        delta = event_dict.get("delta", "")
+                    if not transcript:
+                        transcript = event_dict.get("transcript", "")
+                    if not item_id:
+                        item_id = event_dict.get("item_id", "")
+
+                # Method 3: Check if event.data is dict-like
+                if not delta and isinstance(event.data, dict):
+                    delta = event.data.get("delta", "")
+                    transcript = event.data.get("transcript", "")
+                    item_id = event.data.get("item_id", "")
+                    logger.info(
+                        f"Extracted from dict: delta='{delta}', transcript='{transcript}'"
+                    )
+
+                logger.info(
+                    f"✅ FINAL Delta: '{delta}', Transcript: '{transcript}', Item ID: '{item_id}'"
+                )
+
+                # Add to base_event
+                if delta:
+                    base_event["delta"] = delta
+                    base_event["type"] = "response.audio_transcript.delta"
+                if transcript:
+                    base_event["transcript"] = transcript
+                if item_id:
+                    base_event["item_id"] = item_id
+
+            # Handle transcript_done events
+            elif event.data.type == "transcript_done":
+                logger.info(f"🎤 TRANSCRIPT_DONE EVENT DETECTED")
+
+                # Log the raw event.data object structure
+                logger.info(f"event.data type: {type(event.data)}")
+
+                # Extract transcript
+                transcript = None
+                item_id = None
+
+                # Method 1: Direct attribute access
+                if hasattr(event.data, "transcript"):
+                    transcript = event.data.transcript
+                    logger.info(
+                        f"✅ Found full transcript via direct attribute: '{transcript}'"
+                    )
+
+                if hasattr(event.data, "item_id"):
+                    item_id = event.data.item_id
+                    logger.info(f"✅ Found item_id: '{item_id}'")
+
+                # Method 2: model_dump() if available
+                if not transcript:
+                    event_dict = (
+                        event.data.model_dump()
+                        if hasattr(event.data, "model_dump")
+                        else {}
+                    )
+                    logger.info(f"Event data dict from model_dump: {event_dict}")
+
+                    if not transcript:
+                        transcript = event_dict.get("transcript", "")
+                    if not item_id:
+                        item_id = event_dict.get("item_id", "")
+
+                # Method 3: Check if event.data is dict-like
+                if not transcript and isinstance(event.data, dict):
+                    transcript = event.data.get("transcript", "")
+                    item_id = event.data.get("item_id", "")
+                    logger.info(f"Extracted from dict: transcript='{transcript}'")
+
+                logger.info(
+                    f"✅ FINAL Transcript: '{transcript}', Item ID: '{item_id}'"
+                )
+
+                # Add to base_event
+                if transcript:
+                    base_event["transcript"] = transcript
+                    base_event["type"] = "response.audio_transcript.done"
+                    base_event["text"] = transcript  # Also add as text for frontend
+                if item_id:
+                    base_event["item_id"] = item_id
+
+            # Log all other raw_model_event types for debugging
+            else:
+                logger.info(
+                    f"🔍 Other raw_model_event type: {event.data.type}, attributes: {dir(event.data) if hasattr(event.data, '__dir__') else 'N/A'}"
+                )
         elif event.type == "error":
             base_event["error"] = (
                 str(event.error) if hasattr(event, "error") else "Unknown error"
@@ -207,6 +419,20 @@ async def realtime_proxy(websocket: WebSocket):
     session_id = f"session_{id(websocket)}"  # unique id for each session
 
     await manager.connect(websocket, session_id)
+
+    # Send a test message to verify WebSocket text path works
+    try:
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "debug_text",
+                    "text": "✅ WebSocket connected - text path working",
+                }
+            )
+        )
+        logger.info(f"Sent test message to {session_id}")
+    except Exception as e:
+        logger.error(f"Failed to send test message: {e}")
 
     try:
         while True:

@@ -31,7 +31,7 @@ export function useWebRTC(options: UseWebRTCOptions = {}) {
 
       ws.onmessage = async (event) => {
         const data = JSON.parse(event.data);
-        console.log("Received event:", data.type);
+        console.log("Received event:", data.type, data);
 
         // Handle different event types from backend
         if (data.type === "audio" && data.audio) {
@@ -49,17 +49,31 @@ export function useWebRTC(options: UseWebRTCOptions = {}) {
             console.error("Error decoding audio:", error);
           }
         } else if (data.type === "history_updated") {
-          // Extract transcripts from history - only process new items
-          if (data.history && Array.isArray(data.history)) {
-            data.history.forEach((item: any) => {
-              if (
-                item.item_id &&
-                !processedItemsRef.current.has(item.item_id)
-              ) {
-                processHistoryItem(item);
-                processedItemsRef.current.add(item.item_id);
-              }
-            });
+          console.log("🎯 history_updated event received");
+
+          // PRIORITY 1: Check for pre-extracted last_assistant_message
+          if (data.last_assistant_message) {
+            console.log(
+              "✅ Found last_assistant_message:",
+              data.last_assistant_message,
+            );
+            options.onTranscript?.(data.last_assistant_message, "ai");
+          } else {
+            console.log(
+              "⚠️ No last_assistant_message, extracting from history array",
+            );
+            // PRIORITY 2: Extract transcripts from history - only process new items
+            if (data.history && Array.isArray(data.history)) {
+              data.history.forEach((item: any) => {
+                if (
+                  item.item_id &&
+                  !processedItemsRef.current.has(item.item_id)
+                ) {
+                  processHistoryItem(item);
+                  processedItemsRef.current.add(item.item_id);
+                }
+              });
+            }
           }
         } else if (data.type === "history_added") {
           // Handle newly added items

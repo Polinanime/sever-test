@@ -93,7 +93,7 @@ function App() {
           </div>
 
           {/* Audio Visualizer */}
-          <div className="px-8 py-12 bg-gradient-to-b from-slate-50/50 to-white">
+          <div className="px-4 py-8 bg-gradient-to-b from-slate-50/50 to-white">
             <AudioVisualizer
               isActive={isCallActive && !isMuted}
               audioLevel={audioLevel}
