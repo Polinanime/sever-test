@@ -1,31 +1,17 @@
-"""
-GitHub Tools for OpenAI Realtime Agents
-Provides function definitions and handlers for GitHub integration
-"""
-
 from typing import Any, Dict, List, Optional
 import json
 import logging
 
-from ..integrations.github import GitHubClient, GitHubConfig
+from ..integrations.github import GitHubClient
 
 logger = logging.getLogger(__name__)
 
 
 class GitHubTools:
-    """Tools for GitHub integration with OpenAI agents"""
-
     def __init__(self, github_client: Optional[GitHubClient] = None):
-        """Initialize GitHub tools with a client"""
         self.github_client = github_client or GitHubClient()
 
     def get_function_definitions(self) -> List[Dict[str, Any]]:
-        """
-        Get OpenAI function definitions for GitHub tools
-
-        Returns:
-            List of function definition dictionaries for OpenAI API
-        """
         return [
             {
                 "type": "function",
@@ -415,16 +401,6 @@ class GitHubTools:
     async def execute_function(
         self, function_name: str, arguments: Dict[str, Any]
     ) -> str:
-        """
-        Execute a function call from the agent
-
-        Args:
-            function_name: Name of the function to execute
-            arguments: Dictionary of function arguments
-
-        Returns:
-            JSON string with function result
-        """
         try:
             logger.info(f"Executing function: {function_name} with args: {arguments}")
 
@@ -538,9 +514,8 @@ class GitHubTools:
             logger.error(f"Error executing {function_name}: {e}", exc_info=True)
             return json.dumps({"error": str(e)})
 
-    # Repository implementations
+    # Repository
     async def _list_repositories(self, username: Optional[str], count: int) -> str:
-        """List repositories"""
         repos = await self.github_client.list_repositories(
             username=username, per_page=count
         )
@@ -563,7 +538,6 @@ class GitHubTools:
         return json.dumps(result)
 
     async def _search_repositories(self, query: str, count: int) -> str:
-        """Search repositories"""
         repos = await self.github_client.search_repositories(
             query=query, per_page=count
         )
@@ -585,7 +559,6 @@ class GitHubTools:
         return json.dumps(result)
 
     async def _get_repository_info(self, owner: str, repo: str) -> str:
-        """Get repository information"""
         data = await self.github_client.get_repository(owner, repo)
         result = {
             "name": data["name"],
@@ -605,7 +578,7 @@ class GitHubTools:
         }
         return json.dumps(result)
 
-    # Issue implementations
+    # Issue
     async def _list_issues(
         self,
         owner: str,
@@ -614,7 +587,6 @@ class GitHubTools:
         labels: Optional[List[str]],
         count: int,
     ) -> str:
-        """List issues"""
         issues = await self.github_client.list_issues(
             owner=owner, repo=repo, state=state, labels=labels, per_page=count
         )
@@ -637,7 +609,6 @@ class GitHubTools:
         return json.dumps(result)
 
     async def _get_issue_details(self, owner: str, repo: str, issue_number: int) -> str:
-        """Get issue details"""
         data = await self.github_client.get_issue(owner, repo, issue_number)
         result = {
             "number": data["number"],
@@ -663,7 +634,6 @@ class GitHubTools:
         labels: Optional[List[str]],
         assignees: Optional[List[str]],
     ) -> str:
-        """Create an issue"""
         data = await self.github_client.create_issue(
             owner=owner,
             repo=repo,
@@ -690,7 +660,6 @@ class GitHubTools:
         state: Optional[str],
         labels: Optional[List[str]],
     ) -> str:
-        """Update an issue"""
         data = await self.github_client.update_issue(
             owner=owner,
             repo=repo,
@@ -712,7 +681,6 @@ class GitHubTools:
     async def _add_issue_comment(
         self, owner: str, repo: str, issue_number: int, comment: str
     ) -> str:
-        """Add a comment to an issue"""
         data = await self.github_client.add_issue_comment(
             owner, repo, issue_number, comment
         )
@@ -723,11 +691,10 @@ class GitHubTools:
         }
         return json.dumps(result)
 
-    # Pull request implementations
+    # Pull request
     async def _list_pull_requests(
         self, owner: str, repo: str, state: str, count: int
     ) -> str:
-        """List pull requests"""
         prs = await self.github_client.list_pull_requests(
             owner=owner, repo=repo, state=state, per_page=count
         )
@@ -753,7 +720,6 @@ class GitHubTools:
     async def _get_pull_request_details(
         self, owner: str, repo: str, pr_number: int
     ) -> str:
-        """Get pull request details"""
         data = await self.github_client.get_pull_request(owner, repo, pr_number)
         result = {
             "number": data["number"],
@@ -784,7 +750,6 @@ class GitHubTools:
         base: str,
         body: Optional[str],
     ) -> str:
-        """Create a pull request"""
         data = await self.github_client.create_pull_request(
             owner=owner, repo=repo, title=title, head=head, base=base, body=body
         )
@@ -796,11 +761,10 @@ class GitHubTools:
         }
         return json.dumps(result)
 
-    # Commit implementations
+    # Commit
     async def _list_commits(
         self, owner: str, repo: str, branch: Optional[str], count: int
     ) -> str:
-        """List commits"""
         commits = await self.github_client.list_commits(
             owner=owner, repo=repo, sha=branch, per_page=count
         )
@@ -820,9 +784,8 @@ class GitHubTools:
         }
         return json.dumps(result)
 
-    # Search implementations
+    # Search
     async def _search_issues(self, query: str, count: int) -> str:
-        """Search issues"""
         issues = await self.github_client.search_issues(query=query, per_page=count)
         result = {
             "query": query,
@@ -842,9 +805,8 @@ class GitHubTools:
         }
         return json.dumps(result)
 
-    # User implementations
+    # User
     async def _get_user_info(self, username: Optional[str]) -> str:
-        """Get user information"""
         data = await self.github_client.get_user_info(username)
         result = {
             "username": data["login"],
@@ -863,5 +825,16 @@ class GitHubTools:
         return json.dumps(result)
 
     async def close(self):
-        """Close the GitHub client"""
         await self.github_client.close()
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    async def main():
+        github_tools = GitHubTools()
+        result = await github_tools._list_repositories("polinanime", 10)
+        print(result)
+        await github_tools.close()
+
+    asyncio.run(main())

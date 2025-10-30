@@ -15,6 +15,8 @@ export function useWebRTC(options: UseWebRTCOptions = {}) {
   const playbackAudioContextRef = useRef<AudioContext | null>(null);
   const audioQueueRef = useRef<AudioBuffer[]>([]);
   const isPlayingRef = useRef(false);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  const isBotMutedRef = useRef(false);
 
   const connect = useCallback(async () => {
     try {
@@ -214,6 +216,18 @@ export function useWebRTC(options: UseWebRTCOptions = {}) {
         playbackAudioContextRef.current = new AudioContext({
           sampleRate: 24000,
         });
+
+        // Create gain node for volume control
+        gainNodeRef.current = playbackAudioContextRef.current.createGain();
+        gainNodeRef.current.connect(
+          playbackAudioContextRef.current.destination,
+        );
+        gainNodeRef.current.gain.value = isBotMutedRef.current ? 0 : 1;
+      }
+
+      // Update gain based on mute status
+      if (gainNodeRef.current) {
+        gainNodeRef.current.gain.value = isBotMutedRef.current ? 0 : 1;
       }
 
       const audioContext = playbackAudioContextRef.current;
@@ -264,7 +278,13 @@ export function useWebRTC(options: UseWebRTCOptions = {}) {
 
     const source = audioContext.createBufferSource();
     source.buffer = audioBuffer;
-    source.connect(audioContext.destination);
+
+    // Connect through gain node for volume control
+    if (gainNodeRef.current) {
+      source.connect(gainNodeRef.current);
+    } else {
+      source.connect(audioContext.destination);
+    }
 
     source.onended = () => {
       console.log(
@@ -278,10 +298,18 @@ export function useWebRTC(options: UseWebRTCOptions = {}) {
     source.start();
   };
 
+  const setBotMuted = useCallback((muted: boolean) => {
+    isBotMutedRef.current = muted;
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = muted ? 0 : 1;
+    }
+  }, []);
+
   return {
     connect,
     disconnect,
     sendText,
     isConnected,
+    setBotMuted,
   };
 }

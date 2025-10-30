@@ -3,11 +3,12 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: fastapi-backend
     ports:
       - "8000:8000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GITHUB_USERNAME=${GITHUB_USERNAME}
+      - GITHUB_ACCESS_TOKEN=${GITHUB_ACCESS_TOKEN}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
@@ -19,9 +20,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: react-frontend
     ports:
       - "3000:80"
+    environment:
+      - VITE_WS_URL=ws://localhost:8000/ws/realtime
     depends_on:
       - backend
     restart: unless-stopped

@@ -1,5 +1,13 @@
 import { useState, useRef } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Send } from "lucide-react";
+import {
+  Phone,
+  PhoneOff,
+  Mic,
+  MicOff,
+  Send,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { AudioVisualizer } from "./components/AudioVisualizer";
 import { TranscriptPanel } from "./components/TranscriptPanel";
 import { useWebRTC } from "./hooks/useWebRTC";
@@ -8,28 +16,31 @@ import { useAudioLevel } from "./hooks/useAudioLevel";
 function App() {
   const [isCallActive, setIsCallActive] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [isBotMuted, setIsBotMuted] = useState(false);
   const [transcript, setTranscript] = useState<
     Array<{ role: "user" | "ai"; text: string; timestamp: Date }>
   >([]);
   const [textInput, setTextInput] = useState("");
   const transcriptMapRef = useRef(new Map<string, boolean>());
 
-  const { connect, disconnect, sendText, isConnected } = useWebRTC({
-    onTranscript: (text: string, role: "user" | "ai") => {
-      // Deduplicate transcripts using a map
-      const key = `${role}-${text}`;
-      if (!transcriptMapRef.current.has(key)) {
-        transcriptMapRef.current.set(key, true);
-        setTranscript((prev) => [
-          ...prev,
-          { role, text, timestamp: new Date() },
-        ]);
-      }
+  const { connect, disconnect, sendText, isConnected, setBotMuted } = useWebRTC(
+    {
+      onTranscript: (text: string, role: "user" | "ai") => {
+        // Deduplicate transcripts using a map
+        const key = `${role}-${text}`;
+        if (!transcriptMapRef.current.has(key)) {
+          transcriptMapRef.current.set(key, true);
+          setTranscript((prev) => [
+            ...prev,
+            { role, text, timestamp: new Date() },
+          ]);
+        }
+      },
+      onAudio: (audioData: ArrayBuffer) => {
+        console.log("Received audio data:", audioData.byteLength);
+      },
     },
-    onAudio: (audioData: ArrayBuffer) => {
-      console.log("Received audio data:", audioData.byteLength);
-    },
-  });
+  );
 
   const { audioLevel, startListening, stopListening } = useAudioLevel();
 
@@ -60,11 +71,19 @@ function App() {
     }
   };
 
+  const toggleBotMute = () => {
+    const newMutedState = !isBotMuted;
+    setIsBotMuted(newMutedState);
+    setBotMuted(newMutedState);
+  };
+
   const handleSendText = (e: React.FormEvent) => {
     e.preventDefault();
     if (textInput.trim() && isConnected) {
       sendText(textInput);
-      // Add to transcript immediately
+      // Add to transcript immediately and mark as seen to prevent duplicates
+      const key = `user-${textInput}`;
+      transcriptMapRef.current.set(key, true);
       setTranscript((prev) => [
         ...prev,
         {
@@ -81,35 +100,107 @@ function App() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50 flex items-center justify-center p-6">
       <div className="w-full max-w-2xl">
         {/* Main Call Interface */}
-        <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl border border-slate-200/60 overflow-hidden">
-          {/* Header */}
-          <div className="px-8 py-6 border-b border-slate-200/60">
-            <h1 className="text-2xl font-medium text-slate-800 mb-1">
-              Voice AI Assistant
-            </h1>
-            <p className="text-slate-500 text-sm">
-              {isCallActive ? "Connected" : "Ready to connect"}
-            </p>
+        <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl border border-slate-200/60 overflow-hidden flex flex-col h-[85vh]">
+          {/* Header with Controls */}
+          <div className="px-8 py-6 border-b border-slate-200/60 bg-slate-50/50">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h1 className="text-2xl font-medium text-slate-800 mb-1">
+                  Voice AI Assistant
+                </h1>
+                <p className="text-slate-500 text-sm">
+                  {isCallActive
+                    ? isMuted
+                      ? "Microphone muted"
+                      : "Listening..."
+                    : "Ready to connect"}
+                </p>
+              </div>
+
+              {/* Control Buttons */}
+              <div className="flex items-center gap-4">
+                {/* Mute Microphone Button */}
+                {isCallActive && (
+                  <button
+                    onClick={toggleMute}
+                    className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-300 shadow-md ${
+                      isMuted
+                        ? "bg-slate-300 hover:bg-slate-400 shadow-slate-300/50"
+                        : "bg-white hover:bg-slate-50 shadow-slate-200/80 border border-slate-200"
+                    }`}
+                  >
+                    {isMuted ? (
+                      <MicOff className="w-6 h-6 text-slate-600" />
+                    ) : (
+                      <Mic className="w-6 h-6 text-slate-700" />
+                    )}
+                  </button>
+                )}
+
+                {/* Mute Bot Button */}
+                {isCallActive && (
+                  <button
+                    onClick={toggleBotMute}
+                    className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-300 shadow-md ${
+                      isBotMuted
+                        ? "bg-slate-300 hover:bg-slate-400 shadow-slate-300/50"
+                        : "bg-white hover:bg-slate-50 shadow-slate-200/80 border border-slate-200"
+                    }`}
+                  >
+                    {isBotMuted ? (
+                      <VolumeX className="w-6 h-6 text-slate-600" />
+                    ) : (
+                      <Volume2 className="w-6 h-6 text-slate-700" />
+                    )}
+                  </button>
+                )}
+
+                {/* Call/End Button */}
+                <button
+                  onClick={isCallActive ? handleEndCall : handleStartCall}
+                  className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 transform hover:scale-105 active:scale-95 ${
+                    isCallActive
+                      ? "bg-rose-500 hover:bg-rose-600 shadow-lg shadow-rose-500/40"
+                      : "bg-emerald-500 hover:bg-emerald-600 shadow-lg shadow-emerald-500/40"
+                  }`}
+                >
+                  {isCallActive ? (
+                    <PhoneOff className="w-7 h-7 text-white" />
+                  ) : (
+                    <Phone className="w-7 h-7 text-white" />
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Audio Visualizer */}
-          <div className="px-4 py-8 bg-gradient-to-b from-slate-50/50 to-white">
+          <div className="px-4 py-3 bg-gradient-to-b from-slate-50/50 to-white border-b border-slate-200/60">
             <AudioVisualizer
               isActive={isCallActive && !isMuted}
               audioLevel={audioLevel}
             />
           </div>
 
-          {/* Transcript Panel */}
+          {/* Transcript Panel - Now bigger */}
           {isCallActive && (
-            <div className="px-8 pb-6">
+            <div className="flex-1 overflow-hidden px-8 py-6">
               <TranscriptPanel transcript={transcript} />
+            </div>
+          )}
+
+          {/* Empty state when call is not active */}
+          {!isCallActive && (
+            <div className="flex-1 flex items-center justify-center px-8 py-6">
+              <p className="text-slate-400 text-center text-sm">
+                Start a call to begin conversation
+              </p>
             </div>
           )}
 
           {/* Text Input */}
           {isCallActive && (
-            <div className="px-8 pb-6">
+            <div className="px-8 py-6 border-t border-slate-200/60 bg-white">
               <form onSubmit={handleSendText} className="relative">
                 <input
                   type="text"
@@ -129,56 +220,6 @@ function App() {
               </form>
             </div>
           )}
-
-          {/* Controls */}
-          <div className="px-8 py-8 bg-slate-50/50">
-            <div className="flex items-center justify-center gap-6">
-              {/* Mute Button */}
-              {isCallActive && (
-                <button
-                  onClick={toggleMute}
-                  className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-300 shadow-md ${
-                    isMuted
-                      ? "bg-slate-300 hover:bg-slate-400 shadow-slate-300/50"
-                      : "bg-white hover:bg-slate-50 shadow-slate-200/80 border border-slate-200"
-                  }`}
-                >
-                  {isMuted ? (
-                    <MicOff className="w-6 h-6 text-slate-600" />
-                  ) : (
-                    <Mic className="w-6 h-6 text-slate-700" />
-                  )}
-                </button>
-              )}
-
-              {/* Call/End Button */}
-              <button
-                onClick={isCallActive ? handleEndCall : handleStartCall}
-                className={`w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 transform hover:scale-105 active:scale-95 ${
-                  isCallActive
-                    ? "bg-rose-500 hover:bg-rose-600 shadow-lg shadow-rose-500/40"
-                    : "bg-emerald-500 hover:bg-emerald-600 shadow-lg shadow-emerald-500/40"
-                }`}
-              >
-                {isCallActive ? (
-                  <PhoneOff className="w-8 h-8 text-white" />
-                ) : (
-                  <Phone className="w-8 h-8 text-white" />
-                )}
-              </button>
-            </div>
-
-            {/* Status Text */}
-            <div className="text-center mt-5">
-              <p className="text-slate-500 text-sm font-medium">
-                {isCallActive
-                  ? isMuted
-                    ? "Microphone muted"
-                    : "Listening..."
-                  : "Tap to start call"}
-              </p>
-            </div>
-          </div>
         </div>
       </div>
     </div>

@@ -231,9 +231,7 @@ const AgentChat: React.FC = () => {
 
       case "response.audio_transcript.delta":
         // Handle audio transcription streaming
-        console.log("🎤🎤🎤 TRANSCRIPT DELTA:", event.delta);
         if (event.delta) {
-          console.log("✅✅✅ ADDING TO CURRENT MESSAGE:", event.delta);
           setCurrentAssistantMessage((prev) => {
             const newMessage = prev + event.delta;
             console.log("Current message now:", newMessage);
@@ -504,9 +502,7 @@ const AgentChat: React.FC = () => {
                       ? "text-gray-500"
                       : "text-gray-400"
                 }`}
-              >
-                {message.timestamp.toLocaleTimeString()}
-              </p>
+              ></p>
             </div>
           </div>
         ))}
