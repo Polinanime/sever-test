@@ -23,7 +23,7 @@ services:
     ports:
       - "3000:80"
     environment:
-      - VITE_WS_URL=ws://localhost:8000/ws/realtime
+      - VITE_WS_URL=ws://backend:8000/ws/realtime
     depends_on:
       - backend
     restart: unless-stopped
