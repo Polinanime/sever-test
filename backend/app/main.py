@@ -180,17 +180,19 @@ class RealtimeWebSocketManager:
             config={
                 "model_settings": {
                     "model_name": "gpt-realtime-mini",
-                    "voice": "ash",
-                    "modalities": ["audio", "text"],
-                    "input_audio_format": "pcm16",
-                    "output_audio_format": "pcm16",
-                    "input_audio_transcription": {"model": "gpt-4o-mini-transcribe"},
-                    "turn_detection": {
-                        "type": "semantic_vad",
-                        "interrupt_response": True,
-                    },
                 }
             },
+            #         "voice": "ash",
+            #         "modalities": ["audio", "text"],
+            #         "input_audio_format": "pcm16",
+            #         "output_audio_format": "pcm16",
+            #         "input_audio_transcription": {"model": "gpt-4o-mini-transcribe"},
+            #         "turn_detection": {
+            #             "type": "semantic_vad",
+            #             "interrupt_response": True,
+            #         },
+            #     }
+            # },
         )
 
         session_context = await runner.run()
