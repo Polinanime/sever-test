@@ -378,6 +378,10 @@ const AgentChat: React.FC = () => {
 
   const addMessage = (role: "user" | "assistant", content: string) => {
     setMessages((prev) => {
+      if (content.includes("Previous conversation context")) {
+        return prev;
+      }
+
       const newMessages = [
         ...prev,
         {

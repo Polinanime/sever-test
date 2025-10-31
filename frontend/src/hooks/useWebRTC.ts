@@ -17,10 +17,13 @@ export function useWebRTC(options: UseWebRTCOptions = {}) {
   const isPlayingRef = useRef(false);
   const gainNodeRef = useRef<GainNode | null>(null);
   const isBotMutedRef = useRef(false);
+  const isMutedRef = useRef(false);
+  const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
   const connect = useCallback(async () => {
     try {
-      // WebSocket connection to backend
+      processedItemsRef.current.clear();
+
       const ws = new WebSocket(
         import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws/realtime",
       );
@@ -88,6 +91,13 @@ export function useWebRTC(options: UseWebRTCOptions = {}) {
             processHistoryItem(item);
             processedItemsRef.current.add(item.item_id);
           }
+        } else if (data.type === "history_loaded") {
+          console.log("📜 Loading saved context");
+          if (data.history && Array.isArray(data.history)) {
+            data.history.forEach((item: any) => {
+              processHistoryItem(item);
+            });
+          }
         } else if (data.type === "error") {
           console.error("Backend error:", data.error);
         }
@@ -124,11 +134,10 @@ export function useWebRTC(options: UseWebRTCOptions = {}) {
       scriptProcessorRef.current = processor;
 
       processor.onaudioprocess = (e) => {
-        if (ws.readyState === WebSocket.OPEN) {
+        if (ws.readyState === WebSocket.OPEN && !isMutedRef.current) {
           const inputData = e.inputBuffer.getChannelData(0);
           const int16Data = new Int16Array(inputData.length);
 
-          // Convert float32 to int16
           for (let i = 0; i < inputData.length; i++) {
             const sample = Math.max(-1, Math.min(1, inputData[i]));
             int16Data[i] = sample * 32767;
@@ -305,11 +314,16 @@ export function useWebRTC(options: UseWebRTCOptions = {}) {
     }
   }, []);
 
+  const setMuted = useCallback((muted: boolean) => {
+    isMutedRef.current = muted;
+  }, []);
+
   return {
     connect,
     disconnect,
     sendText,
     isConnected,
     setBotMuted,
+    setMuted,
   };
 }

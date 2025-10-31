@@ -3,3 +3,6 @@ node_modules
 key
 __pycache__
 .DS_Store
+credentials.json
+token.json
+data
