@@ -4,7 +4,7 @@
 
 # How to Run
 
-## Firstly, set environment variable `OPENAI_API_KEY` and get `credentials.json` for Google API. To get this file you need:
+Firstly, set environment variable `OPENAI_API_KEY` and get `credentials.json` for Google API. To get this file you need:
 
 - go to [Google Cloud Console](https://console.cloud.google.com/)
 - create new project and setup Mail and Calendar API
@@ -45,3 +45,4 @@ User → Frontend
 
 - Save one context and one api key at a time
 - UI shows all the messages (system also) - better debug btw
+- If audio stucks - reload page)
